@@ -1,103 +1,236 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useState, useEffect, useMemo } from 'react';
+import Image from 'next/image';
+import { Player } from './components/Player';
+import { ArtistLegend } from './components/ArtistLegend';
+import { Comments } from './components/Comments';
+import NoSSR from './components/NoSSR';
+import CSROnly from './components/CSROnly';
+import { WalletConnect } from './components/WalletConnect';
+import { TrackSelector } from './components/TrackSelector';
+import { artists, tracks, PREVIEW_LENGTH, Track, Artist } from './lib/artistData';
+import { Comment, addComment, getComments, subscribeToComments } from './lib/supabase';
+import { getCurrentUser, FarcasterUser } from './lib/farcaster';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { initializeAnalytics, trackEvent } from './lib/analytics';
+
+function HomePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  
+  // State for the app
+  const [selectedTrackId, setSelectedTrackId] = useState('midi-punk-1'); // Default to first track
+  const [isFullTrackUnlocked, setIsFullTrackUnlocked] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [userWalletAddress, setUserWalletAddress] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<FarcasterUser | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  const selectedTrack = useMemo(
+    () => tracks.find((track) => track.id === selectedTrackId) || tracks[0],
+    [selectedTrackId]
+  );
+
+  // Filter artists based on the community of the selected track
+  const communityArtists = useMemo(() => {
+    return artists.filter((artist: Artist) => {
+      return artist.community === selectedTrack.community;
+    });
+  }, [artists, selectedTrack.community]);
+
+  const currentArtist = useMemo(() => {
+    return communityArtists.find(
+      (artist) => currentTime >= artist.startTime && currentTime < artist.endTime
+    );
+  }, [currentTime, communityArtists]);
+
+  const audioUrl = `/audio/${selectedTrack.fileName}`;
+
+  // Initialize the app
+  useEffect(() => {
+    // Initialize analytics
+    initializeAnalytics();
+    
+    // Get Farcaster user
+    const user = getCurrentUser();
+    if (user) setCurrentUser(user);
+
+    // Load comments for the selected track
+    const loadComments = async () => {
+      const loadedComments = await getComments(selectedTrackId);
+      setComments(loadedComments);
+    };
+    loadComments();
+
+    // Check for timestamp in URL
+    const timestampParam = searchParams.get('t');
+    if (timestampParam) {
+      const timestamp = parseInt(timestampParam, 10);
+      if (!isNaN(timestamp)) {
+        setCurrentTime(timestamp);
+      }
+    }
+    
+    // Subscribe to new comments for this track
+    const subscription = subscribeToComments(selectedTrackId, (newComment) => {
+      setComments((prevComments) => [...prevComments, newComment]);
+    });
+
+    // Track page view for analytics
+    trackEvent('page_view', {
+      page: 'side_by_side_project',
+      track_id: selectedTrackId,
+      user_id: user?.fid || 'anonymous',
+    });
+
+    setIsInitialized(true);
+
+    // Cleanup
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [searchParams, selectedTrackId]);
+
+  // Handle track selection
+  const handleTrackSelect = (trackId: string) => {
+    setSelectedTrackId(trackId);
+    setCurrentTime(0); // Reset playback time when switching tracks
+    
+    // Track for analytics
+    trackEvent('track_selected', {
+      track_id: trackId,
+      track_title: tracks.find(t => t.id === trackId)?.title || 'unknown',
+      user_id: currentUser?.fid || 'anonymous',
+    });
+    
+    // Load comments for the new track
+    const loadComments = async () => {
+      const loadedComments = await getComments(trackId);
+      setComments(loadedComments);
+    };
+    loadComments();
+  };
+
+  // Handle wallet connection
+  const handleWalletConnected = (address: string, hasTokens: boolean) => {
+    setUserWalletAddress(address);
+    setIsFullTrackUnlocked(hasTokens);
+    
+    // Track for analytics
+    trackEvent('wallet_connected', {
+      has_tokens: hasTokens,
+      user_id: currentUser?.fid || 'anonymous',
+    });
+  };
+
+  // Handle adding a comment
+  const handleAddComment = async (timestamp: number, text: string) => {
+    if (!currentUser) return;
+    
+    const userId = currentUser.username || `user-${currentUser.fid}`;
+    const newComment = await addComment(selectedTrackId, timestamp, userId, text);
+    
+    if (newComment) {
+      // Track for analytics
+      trackEvent('comment_added', {
+        timestamp,
+        track_id: selectedTrackId,
+        user_id: currentUser.fid,
+      });
+    }
+  };
+
+  // Handle time updates from player
+  const handleTimeUpdate = (time: number) => {
+    setCurrentTime(time);
+  };
+
+  // Handle seeking to a specific time
+  const handleSeekToTime = (time: number) => {
+    setCurrentTime(time);
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
+    <main className="min-h-screen bg-black text-white p-4 max-w-lg mx-auto">
+      <h1 className="text-2xl font-bold text-center mb-6">Side by Side Project</h1>
+      
+      <div className="mb-6">
+        <TrackSelector 
+          tracks={tracks} 
+          selectedTrackId={selectedTrackId} 
+          onTrackSelect={handleTrackSelect} 
         />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+      </div>
+      
+      <div className="mb-6">
+        <NoSSR
+          fallback={
+            <div className="flex justify-center items-center h-24 bg-gray-800/30 rounded-md mb-4">
+              <div className="animate-pulse text-sm text-white/70">Loading audio player...</div>
+            </div>
+          }
+        >
+          <Player
+            audioUrl={audioUrl}
+            onTimeUpdate={handleTimeUpdate}
+            isFullTrackUnlocked={isFullTrackUnlocked}
+            previewLength={PREVIEW_LENGTH}
+            currentTime={currentTime}
+            onSeek={handleSeekToTime}
+            artists={communityArtists}
+            trackTitle={selectedTrack.title}
+          />
+        </NoSSR>
+      </div>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
+      <div className="mb-6">
+        <ArtistLegend
+          artists={communityArtists}
+          currentArtistId={currentArtist?.id || null}
+          onArtistClick={handleSeekToTime}
+          isFullTrackUnlocked={isFullTrackUnlocked}
+        />
+      </div>
+      
+      <div className="mb-6">
+        <WalletConnect onConnected={handleWalletConnected} />
+      </div>
+
+      <div className="mb-6">
+        <Comments
+          comments={comments}
+          currentTime={currentTime}
+          onTimeClick={handleSeekToTime}
+          onAddComment={handleAddComment}
+          isAuthenticated={!!currentUser}
+        />
+      </div>
+      
+      <footer className="mt-8 pt-6 border-t border-gray-800 text-center text-gray-400 text-sm">
+        <p>© {new Date().getFullYear()} Side by Side Project</p>
       </footer>
-    </div>
+    </main>
   );
 }
+
+// Wrap the entire page in CSROnly to prevent any server-side rendering
+export default function Home() {
+  return (
+    <CSROnly
+      fallback={
+        <div className="min-h-screen bg-black text-white flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-pulse text-lg mb-2">Loading Side by Side Project...</div>
+            <div className="text-sm text-gray-400">Please wait while the audio player initializes</div>
+          </div>
+        </div>
+      }
+    >
+      <HomePage />
+    </CSROnly>
+  );
+}
+
+// End of file
