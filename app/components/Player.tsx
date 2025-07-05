@@ -5,15 +5,12 @@ import { Artist } from '../lib/artistData';
 import ClientOnly from './ClientOnly';
 
 import dynamic from 'next/dynamic';
+import LoadingWave from './LoadingWave';
 
 // Import the Waveform component only on client-side with no SSR
 const DynamicWaveform = dynamic(() => import('./Waveform'), {
   ssr: false,
-  loading: () => (
-    <div className="flex justify-center items-center h-24 bg-gray-800/30 rounded-md">
-      <div className="animate-pulse text-sm text-white/70">Loading waveform...</div>
-    </div>
-  ),
+  loading: () => <LoadingWave />,
 });
 
 interface PlayerProps {

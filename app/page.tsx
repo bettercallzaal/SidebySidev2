@@ -7,6 +7,7 @@ import { ArtistLegend } from './components/ArtistLegend';
 import { Comments } from './components/Comments';
 import NoSSR from './components/NoSSR';
 import CSROnly from './components/CSROnly';
+import SocialShare from './components/SocialShare';
 import { WalletConnect } from './components/WalletConnect';
 import { TrackSelector } from './components/TrackSelector';
 import { artists, tracks, PREVIEW_LENGTH, Track, Artist } from './lib/artistData';
@@ -208,6 +209,11 @@ function HomePage() {
         />
       </div>
       
+      <div className="mb-6 mt-10">
+        <h3 className="text-lg font-medium mb-3">Share this project</h3>
+        <SocialShare title="Check out this awesome Side by Side Project with 30 artists!" />
+      </div>
+
       <footer className="mt-8 pt-6 border-t border-gray-800 text-center text-gray-400 text-sm">
         <p>© {new Date().getFullYear()} Side by Side Project</p>
       </footer>

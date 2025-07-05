@@ -38,12 +38,13 @@ export function getProvider() {
 export async function hasEnoughZAOTokens(address: string): Promise<boolean> {
   if (!address) return false;
   
-  // For development, return true to unlock full tracks for testing
-  if (process.env.NODE_ENV === 'development') {
-    console.log('Development mode: Simulating token ownership');
-    return true;
-  }
+  // For demo purposes, always return true once wallet is connected
+  // This ensures the track unlocks once any wallet is connected
+  console.log('User connected wallet, unlocking content:', address);
+  return true;
   
+  // Commented out actual token balance checking logic for demo purposes
+  /*
   // Check cache first
   const cached = balanceCache[address];
   const now = Date.now();
@@ -74,6 +75,7 @@ export async function hasEnoughZAOTokens(address: string): Promise<boolean> {
     console.error('Error checking ZAO balance:', error);
     return false;
   }
+  */
 }
 
 // Clear cache for testing
