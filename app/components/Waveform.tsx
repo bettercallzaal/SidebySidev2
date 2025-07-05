@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Artist } from '../lib/artistData';
+import { VisualizationMode } from './VisualizationSettings';
 
 // This component only runs on client-side
 const isClient = typeof window !== 'undefined';
@@ -22,6 +23,8 @@ interface WaveformProps {
   barWidth?: number;
   barGap?: number;
   responsive?: boolean;
+  visualizationMode?: VisualizationMode;
+  onReady?: (duration: number) => void;
 }
 
 export const Waveform: React.FC<WaveformProps> = ({
@@ -36,10 +39,12 @@ export const Waveform: React.FC<WaveformProps> = ({
   height = 80,
   barWidth = 2,
   barGap = 1,
-  responsive = true
+  responsive = true,
+  visualizationMode = 'waveform',
+  onReady,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const wavesurferRef = useRef<WavesurferType>(null); // Using any since WaveSurfer is dynamically imported
+  const wavesurferRef = useRef<WavesurferType>(null);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [hoveredArtist, setHoveredArtist] = useState<Artist | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
@@ -47,32 +52,24 @@ export const Waveform: React.FC<WaveformProps> = ({
   const [mouseInside, setMouseInside] = useState(false);
 
   // Filter artists based on the selected track's community
-  const relevantArtists = useMemo(() => {
-    if (!artists || artists.length === 0) return [];
-    return artists;
-  }, [artists]);
+  const relevantArtists = artists;
 
   // Find the artist at the current time
-  const currentArtist = useMemo(() => {
-    if (!relevantArtists.length) return null;
-    return relevantArtists.find(artist => 
-      currentTime >= artist.startTime && currentTime < artist.endTime
-    ) || null;
-  }, [currentTime, relevantArtists]);
+  const currentArtist = relevantArtists.find(artist =>
+    currentTime >= artist.startTime && currentTime < artist.endTime
+  ) || null;
 
   // Wavesurfer initialization effect - only runs on client side
   useEffect(() => {
-    // Skip effect entirely on server-side
     if (typeof window === 'undefined') return;
-    
+
     let isMounted = true;
-    let initTimer: ReturnType<typeof setTimeout>;
-    
+
     const initializeWaveSurfer = async () => {
       try {
         if (!containerRef.current || !isMounted) return;
         setIsLoaded(false);
-        
+
         // Destroy any existing instance first
         if (wavesurferRef.current) {
           try {
@@ -82,24 +79,19 @@ export const Waveform: React.FC<WaveformProps> = ({
           }
           wavesurferRef.current = null;
         }
-        
+
         // Dynamically import WaveSurfer
         const WaveSurferModule = await import('wavesurfer.js');
-        
+
         if (!isMounted || !containerRef.current) return;
-        
+
         const WaveSurfer = WaveSurferModule.default;
         if (!WaveSurfer || !containerRef.current) return;
-        
-        // Initialize WaveSurfer with modern configuration
-        const wavesurfer = WaveSurfer.create({
+
+        // Base options for all visualization modes
+        const baseOptions = {
           container: containerRef.current,
-          waveColor: waveColor,
-          progressColor: progressColor,
           height,
-          barWidth,
-          barGap,
-          barRadius: 2,
           cursorWidth: 2,
           cursorColor: '#ffffff',
           backend: 'WebAudio',
@@ -111,43 +103,86 @@ export const Waveform: React.FC<WaveformProps> = ({
           drawingContextAttributes: {
             desynchronized: true, // Improve rendering performance
             alpha: true,
-            willReadFrequently: false
           },
-          // Better performance settings
-          pixelRatio: window.devicePixelRatio || 1,
-          // Explicitly set values to avoid undefined
-          autoplay: false,
-          interact: true
+        };
+
+        // Options specific to visualization mode
+        const modeOptions: Record<VisualizationMode, any> = {
+          waveform: {
+            waveColor,
+            progressColor,
+            barWidth,
+            barGap,
+            barRadius: 2,
+          },
+          spectrogram: {
+            waveColor: 'rgb(200, 0, 200)',
+            progressColor: 'rgb(100, 0, 100)',
+          },
+          combined: {
+            waveColor: waveColor,
+            progressColor: progressColor,
+            barWidth,
+            barGap,
+            barRadius: 2,
+          }
+        };
+
+        // Create the WaveSurfer instance
+        const wavesurfer = WaveSurfer.create({
+          ...baseOptions,
+          ...modeOptions[visualizationMode],
         });
-        
-        if (!isMounted) {
-          try {
-            wavesurfer.destroy();
-          } catch (e) {}
-          return;
-        }
-        
-        // Setup listeners before loading to catch all events
+
+        // Load audio
+        wavesurfer.load(audioUrl);
+
+        // Add event listeners
         wavesurfer.on('ready', () => {
-          if (!isMounted) return;
-          
-          // Set loaded state
           setIsLoaded(true);
-          
-          // Only seek if we have valid values
-          if (currentTime > 0 && duration > 0 && wavesurfer && typeof wavesurfer.seekTo === 'function') {
+          if (onReady) onReady(wavesurfer.getDuration());
+
+          // For spectrogram and combined modes, add visual enhancements
+          if ((visualizationMode === 'spectrogram' || visualizationMode === 'combined') && isClient) {
             try {
-              const position = Math.min(currentTime / Math.max(duration, 1), 1);
-              wavesurfer.seekTo(position);
+              // Modern wavesurfer.js v7+ has built-in spectrogram support
+              // We handle it with specialized color schemes and settings
+              const gradient = containerRef.current?.querySelector('canvas')?.getContext('2d');
+              if (gradient) {
+                // Create a custom gradient for the visualization
+                const gradientColors = gradient.createLinearGradient(0, 0, 0, height);
+                gradientColors.addColorStop(0, 'rgba(200, 0, 200, 0.8)');
+                gradientColors.addColorStop(0.5, 'rgba(128, 0, 128, 0.5)');
+                gradientColors.addColorStop(1, 'rgba(64, 0, 64, 0.3)');
+                
+                // Apply the gradient to the waveform
+                if (wavesurfer) {
+                  // Use any type to access properties that might not be in the type definition
+                  (wavesurfer as any).setOptions({ 
+                    waveColor: gradientColors,
+                    progressColor: visualizationMode === 'spectrogram' ? 
+                      'rgba(255, 255, 255, 0.5)' : 
+                      progressColor
+                  });
+                }
+              }
             } catch (err) {
-              console.error('Error seeking to position:', err);
+              console.error('Error with visualization enhancement:', err);
             }
           }
-          
-          // For modern visualization, we'll use our custom artist timeline instead of wavesurfer regions
-          // This avoids TypeScript errors and compatibility issues with different wavesurfer versions
-          
-          // Add click handler for seeking
+
+          // Initialize regions after audio is loaded
+          try {
+            // Modern wavesurfer.js uses a regions plugin or different API
+            // Instead of depending on it, we'll use our custom artist timeline implementation
+            // This is already well-implemented in your existing code
+            // and avoids compatibility issues with different wavesurfer versions
+            
+            // The regions will be visually rendered by the React timeline component
+            // in the return section of this component
+          } catch (err) {
+            console.error('Error with initialization:', err);
+          }
           wavesurfer.on('click', (e: MouseEvent) => {
             if (!containerRef.current) return;
             const duration = wavesurfer.getDuration();
@@ -179,21 +214,16 @@ export const Waveform: React.FC<WaveformProps> = ({
     };
     
     // Delay initialization slightly to ensure DOM is ready
-    initTimer = setTimeout(() => {
+    const initTimer = setTimeout(() => {
       initializeWaveSurfer();
-    }, 300); // Longer delay for more reliable initialization
-    
+    }, 100);
+
     return () => {
-      isMounted = false;
       clearTimeout(initTimer);
-      
-      // Clean up wavesurfer instance
       if (wavesurferRef.current) {
         try {
           wavesurferRef.current.destroy();
-        } catch (err) {
-          console.error('Error destroying wavesurfer instance:', err);
-        }
+        } catch (e) { }
         wavesurferRef.current = null;
       }
     };
@@ -381,4 +411,4 @@ export const Waveform: React.FC<WaveformProps> = ({
 };
 
 // Use a default export of the component itself for dynamic imports
-export default Waveform;
+export default React.memo(Waveform);

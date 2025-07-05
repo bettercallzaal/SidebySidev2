@@ -6,6 +6,8 @@ import ClientOnly from './ClientOnly';
 
 import dynamic from 'next/dynamic';
 import LoadingWave from './LoadingWave';
+import KeyboardShortcutsHelp from './KeyboardShortcutsHelp';
+import VisualizationSettings, { VisualizationMode } from './VisualizationSettings';
 
 // Import the Waveform component only on client-side with no SSR
 const DynamicWaveform = dynamic(() => import('./Waveform'), {
@@ -42,6 +44,7 @@ export const Player: React.FC<PlayerProps> = ({
   const [internalCurrentTime, setInternalCurrentTime] = useState(0);
   const [volume, setVolume] = useState(1);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [visualizationMode, setVisualizationMode] = useState<VisualizationMode>('waveform');
   
   // Find current artist based on playback time
   const currentArtist = useMemo(() => {
@@ -156,56 +159,86 @@ export const Player: React.FC<PlayerProps> = ({
     }
   };
   
-  // Handle keyboard shortcuts
+  // Enhanced keyboard shortcuts for better accessibility
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle if not typing in an input
-      if (e.target instanceof HTMLInputElement || 
-          e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
+      // Don't capture keyboard events when user is typing in an input/textarea
+      const isTyping = ['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName);
+      if (isTyping) return;
       
-      // Space - play/pause
-      if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlayPause();
-      }
-      
-      // Left arrow - seek back 5s
-      if (e.code === 'ArrowLeft') {
-        const newTime = Math.max(0, internalCurrentTime - 5);
-        if (audioRef.current) {
-          audioRef.current.currentTime = newTime;
-          onSeek(newTime);
-        }
-      }
-      
-      // Right arrow - seek forward 5s
-      if (e.code === 'ArrowRight') {
-        const newTime = Math.min(duration, internalCurrentTime + 5);
-        if (audioRef.current) {
-          audioRef.current.currentTime = newTime;
-          onSeek(newTime);
-        }
-      }
-      
-      // Up/down arrows - volume
-      if (e.code === 'ArrowUp') {
-        const newVolume = Math.min(1, volume + 0.1);
-        setVolume(newVolume);
-        if (audioRef.current) audioRef.current.volume = newVolume;
-      }
-      
-      if (e.code === 'ArrowDown') {
-        const newVolume = Math.max(0, volume - 0.1);
-        setVolume(newVolume);
-        if (audioRef.current) audioRef.current.volume = newVolume;
+      switch(e.code) {
+        case 'Space': // Play/Pause
+          e.preventDefault(); // Prevent page scrolling
+          togglePlayPause();
+          break;
+        case 'ArrowRight': // Forward 10 seconds
+          if (e.shiftKey) {
+            // Jump to next artist segment
+            const currentTime = audioRef.current?.currentTime || 0;
+            const nextArtist = artists.find(artist => artist.startTime > currentTime);
+            if (nextArtist && audioRef.current) {
+              audioRef.current.currentTime = nextArtist.startTime;
+              onSeek(nextArtist.startTime);
+            }
+          } else {
+            if (audioRef.current) {
+              const newTime = Math.min(audioRef.current.duration, audioRef.current.currentTime + 10);
+              audioRef.current.currentTime = newTime;
+              onSeek(newTime);
+            }
+          }
+          break;
+        case 'ArrowLeft': // Backward 10 seconds
+          if (e.shiftKey) {
+            // Jump to previous artist segment
+            const currentTime = audioRef.current?.currentTime || 0;
+            const prevArtist = [...artists]
+              .reverse()
+              .find(artist => artist.startTime < currentTime - 1); // -1 second buffer
+            
+            if (prevArtist && audioRef.current) {
+              audioRef.current.currentTime = prevArtist.startTime;
+              onSeek(prevArtist.startTime);
+            }
+          } else {
+            if (audioRef.current) {
+              const newTime = Math.max(0, audioRef.current.currentTime - 10);
+              audioRef.current.currentTime = newTime;
+              onSeek(newTime);
+            }
+          }
+          break;
+        case 'ArrowUp': // Volume up
+          e.preventDefault(); // Prevent page scrolling
+          if (volume < 1) {
+            const newVolume = Math.min(1, volume + 0.1);
+            setVolume(newVolume);
+            if (audioRef.current) audioRef.current.volume = newVolume;
+          }
+          break;
+        case 'ArrowDown': // Volume down
+          e.preventDefault(); // Prevent page scrolling
+          if (volume > 0) {
+            const newVolume = Math.max(0, volume - 0.1);
+            setVolume(newVolume);
+            if (audioRef.current) audioRef.current.volume = newVolume;
+          }
+          break;
+        case 'KeyM': // Mute/unmute
+          if (volume > 0) {
+            setVolume(0);
+            if (audioRef.current) audioRef.current.volume = 0;
+          } else {
+            setVolume(0.8);
+            if (audioRef.current) audioRef.current.volume = 0.8;
+          }
+          break;
       }
     };
-
+    
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [internalCurrentTime, duration, volume, togglePlayPause, onSeek]);
+  }, [togglePlayPause, volume, onSeek, artists]);
 
   return (
     <div className="w-full relative">
@@ -250,9 +283,10 @@ export const Player: React.FC<PlayerProps> = ({
               }}
               waveColor="rgba(255, 255, 255, 0.3)"
               progressColor={currentArtist ? `${currentArtist.color}` : "rgba(255, 255, 255, 0.8)"}
-              height={80}
+              height={100}
               barWidth={2}
               barGap={1}
+              visualizationMode={visualizationMode}
               responsive={true}
             />
           </ClientOnly>
@@ -436,6 +470,15 @@ export const Player: React.FC<PlayerProps> = ({
             </div>
           </div>
         )}
+        
+        {/* Controls and settings */}
+        <div className="mt-4 flex justify-between items-center">
+          <VisualizationSettings 
+            mode={visualizationMode} 
+            onModeChange={setVisualizationMode} 
+          />
+          <KeyboardShortcutsHelp />
+        </div>
       </div>
     </div>
   );
