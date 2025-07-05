@@ -6,6 +6,9 @@ import { Artist } from '../lib/artistData';
 // This component only runs on client-side
 const isClient = typeof window !== 'undefined';
 
+// Define wavesurfer type for TypeScript - using any to avoid issues with dynamic imports
+type WavesurferType = any;
+
 interface WaveformProps {
   audioUrl: string;
   artists: Artist[];
@@ -36,7 +39,7 @@ export const Waveform: React.FC<WaveformProps> = ({
   responsive = true
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const wavesurferRef = useRef<any>(null); // Using any since WaveSurfer is dynamically imported
+  const wavesurferRef = useRef<WavesurferType>(null); // Using any since WaveSurfer is dynamically imported
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [hoveredArtist, setHoveredArtist] = useState<Artist | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
@@ -82,26 +85,36 @@ export const Waveform: React.FC<WaveformProps> = ({
         
         // Dynamically import WaveSurfer
         const WaveSurferModule = await import('wavesurfer.js');
+        
         if (!isMounted || !containerRef.current) return;
         
         const WaveSurfer = WaveSurferModule.default;
         if (!WaveSurfer || !containerRef.current) return;
         
-        // Initialize WaveSurfer
+        // Initialize WaveSurfer with modern configuration
         const wavesurfer = WaveSurfer.create({
           container: containerRef.current,
-          waveColor,
-          progressColor,
+          waveColor: waveColor,
+          progressColor: progressColor,
           height,
           barWidth,
           barGap,
-          responsive,
-          cursorWidth: 0,
-          backend: 'MediaElement',
+          barRadius: 2,
+          cursorWidth: 2,
+          cursorColor: '#ffffff',
+          backend: 'WebAudio',
           normalize: true,
           partialRender: true,
+          responsive,
           minPxPerSec: 50,
           hideScrollbar: true,
+          drawingContextAttributes: {
+            desynchronized: true, // Improve rendering performance
+            alpha: true,
+            willReadFrequently: false
+          },
+          // Better performance settings
+          pixelRatio: window.devicePixelRatio || 1,
           // Explicitly set values to avoid undefined
           autoplay: false,
           interact: true
@@ -130,6 +143,19 @@ export const Waveform: React.FC<WaveformProps> = ({
               console.error('Error seeking to position:', err);
             }
           }
+          
+          // For modern visualization, we'll use our custom artist timeline instead of wavesurfer regions
+          // This avoids TypeScript errors and compatibility issues with different wavesurfer versions
+          
+          // Add click handler for seeking
+          wavesurfer.on('click', (e: MouseEvent) => {
+            if (!containerRef.current) return;
+            const duration = wavesurfer.getDuration();
+            const rect = containerRef.current.getBoundingClientRect();
+            const position = (e.clientX - rect.left) / rect.width;
+            const clickTime = position * duration;
+            onSeek(clickTime);
+          });
         });
         
         wavesurfer.on('error', (err) => {
@@ -239,27 +265,58 @@ export const Waveform: React.FC<WaveformProps> = ({
 
   return (
     <div className="relative w-full">
-      {/* Loading state */}
+      {/* Modern loading state - animated waveform visualization */}
       {!isLoaded && (
         <div className="flex justify-center items-center h-24 bg-gray-800/30 rounded-md mb-2">
-          <div className="animate-pulse text-sm text-white/70">Loading waveform...</div>
+          <div className="flex items-end space-x-1">
+            {[...Array(8)].map((_, i) => {
+              const height = Math.abs(Math.sin(i * 0.5) * 40) + 10;
+              return (
+                <div 
+                  key={i}
+                  className="w-2 rounded-full bg-gradient-to-t from-purple-700 to-purple-400 animate-pulse"
+                  style={{
+                    height: `${height}px`,
+                    animationDelay: `${i * 0.07}s`,
+                    animationDuration: '1.2s'
+                  }}
+                />
+              );
+            })}
+          </div>
         </div>
       )}
       
-      {/* Artist timeline above the waveform */}
-      <div className="relative w-full h-5 mb-1">
+      {/* Enhanced artist timeline above the waveform */}
+      <div className="relative w-full h-8 mb-2 bg-gray-900/30 rounded-md overflow-hidden">
         {relevantArtists.map((artist) => (
           <div 
             key={artist.id}
-            className="absolute h-5 top-0 opacity-80 hover:opacity-100 cursor-pointer transition-opacity"
+            className="absolute h-full top-0 opacity-80 hover:opacity-100 cursor-pointer transition-all hover:h-[110%] hover:-top-[5%] group"
             style={{
               left: `${(artist.startTime / duration) * 100}%`,
               width: `${((artist.endTime - artist.startTime) / duration) * 100}%`,
-              backgroundColor: artist.color,
+              backgroundColor: artist.color || '#9147FF',
               borderRight: artist.endTime < duration ? '1px solid rgba(0,0,0,0.3)' : 'none'
             }}
             onClick={() => onSeek(artist.startTime)}
-            title={`${artist.name} (${formatTime(artist.startTime)})`}
+          >
+            {/* Artist name tooltip on hover */}
+            <span 
+              className="absolute top-full left-0 mt-1 bg-black/90 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              {artist.name} ({formatTime(artist.startTime)})
+            </span>
+          </div>
+        ))}
+        
+        {/* Time markers */}
+        {[0, 0.25, 0.5, 0.75, 1].map(position => (
+          <div 
+            key={position}
+            className="absolute top-0 h-2 border-l border-white/30"
+            style={{ left: `${position * 100}%` }}
           />
         ))}
       </div>
@@ -307,10 +364,17 @@ export const Waveform: React.FC<WaveformProps> = ({
         </div>
       )}
 
-      {/* Current artist display below waveform */}
-      <div className="mt-2 flex justify-between text-xs text-white opacity-70">
-        <div>{formatTime(currentTime)}</div>
-        <div>{formatTime(duration)}</div>
+      {/* Enhanced time display with current artist highlight */}
+      <div className="mt-2 flex justify-between items-center text-sm">
+        <div className="flex items-center space-x-2">
+          <span className="text-white opacity-70">{formatTime(currentTime)}</span>
+          {currentArtist && (
+            <span className="px-2 py-0.5 bg-purple-800/40 rounded text-xs text-purple-300 truncate max-w-[150px]" title={currentArtist.name}>
+              {currentArtist.name}
+            </span>
+          )}
+        </div>
+        <div className="text-white opacity-70">{formatTime(duration)}</div>
       </div>
     </div>
   );
